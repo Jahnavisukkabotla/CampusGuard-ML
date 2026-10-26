@@ -3,13 +3,13 @@ import os
 import joblib
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
+MODEL_PATH = os.getenv("MODEL_PATH", "campusguard_phishing_model.joblib")
 
 if not os.path.exists(MODEL_PATH):
     raise RuntimeError(
-        f"Trained model not found at {MODEL_PATH}. Train the model first."
+        f"Trained model not found at {MODEL_PATH}."
     )
 
 model = joblib.load(MODEL_PATH)
@@ -36,28 +36,22 @@ def predict(email: EmailRequest):
             detail="Email subject or body is required",
         )
 
-    prediction = model.predict([text])[0]
-    probabilities = model.predict_proba([text])[0]
-    classes = list(model.classes_)
-    probability_map = {
-        label: float(probabilities[index])
-        for index, label in enumerate(classes)
-    }
+    prediction = int(model.predict([text])[0])
 
-    phishing_probability = probability_map.get("phishing", 0.0)
-    risk_score = round(phishing_probability * 100)
+    # Label 1 = phishing; label 0 = legitimate.
+    # Linear SVM decision scores are not probabilities.
+    decision = float(model.decision_function([text])[0])
 
-    # These are initial product thresholds, not calibrated guarantees.
-    if risk_score >= 70:
-        status = "PHISHING"
-    elif risk_score >= 40:
-        status = "SUSPICIOUS"
+    # A transparent heuristic score, not a calibrated probability.
+    risk_score = max(0, min(100, round(50 + decision * 10)))
+
+    if prediction == 1:
+        status = "PHISHING" if risk_score >= 70 else "SUSPICIOUS"
     else:
         status = "SAFE"
 
     return {
-        "prediction": prediction,
+        "prediction": "phishing" if prediction == 1 else "safe",
         "status": status,
         "riskScore": risk_score,
-        "modelProbability": round(phishing_probability, 4),
     }
